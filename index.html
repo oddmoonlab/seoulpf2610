@@ -438,22 +438,7 @@ function getMiricanvasQuery(url){
   }catch(e){}
   return null;
 }
-// 미리캔버스 작가 요소 페이지를 넓은 화면으로 캡처 (상단 메뉴/배너는 숨김)
-function miriCaptureUrl(link){
-  const target = normalizeUrl(link);
-  const css = 'header,nav,footer,[role="banner"],[role="navigation"],[role="contentinfo"]{display:none !important}';
-  const p = new URLSearchParams();
-  p.set('url', target);
-  p.set('screenshot','true');
-  p.set('meta','false');
-  p.set('embed','screenshot.url');
-  p.set('waitForTimeout','6000');
-  p.set('viewport.width','1440');
-  p.set('viewport.height','1080');
-  p.set('styles', css);
-  return 'https://api.microlink.io/?' + p.toString();
-}
-// 자동 캡처(microlink) 이미지인지 확인 — 직접 넣은 이미지는 자르지 않음
+// 예전 자동 캡처(microlink) 주소인지 확인 — 하루 5회 제한 때문에 더 이상 쓰지 않음
 function isMiriAutoCapture(src){ return !!src && src.indexOf('api.microlink.io')!==-1; }
 // LINE 스토어 주소에서 대표 이미지 주소를 바로 만듭니다 (모바일 공유 링크 포함)
 function lineImageFromUrl(url){
@@ -490,6 +475,7 @@ function resolveImageSrc(rawSrc){
 // PDF 만들 때는 모든 이미지를 CORS 허용 프록시로 통과시켜 빈칸이 생기지 않게 합니다
 function pdfSafeSrc(src){
   if(!src) return src;
+  if(src.indexOf('data:')===0) return src;
   if(src.indexOf('images.weserv.nl')!==-1) return src;
   return weserv(src);
 }
@@ -726,12 +712,14 @@ function renderItemCard(item, forPDF, idx, kind){
   const isMiri = kind==='miri' || isMiricanvasLink(link);
   let imgSrc = '';
   let imgClass = 'item-img';
-  if(item.image && item.image.trim()){
-    imgSrc = resolveImageSrc(item.image.trim());
-    if(isMiri) imgClass += ' screenshot-img';
-  }else if(isMiri && link){
-    imgSrc = miriCaptureUrl(link);
-    imgClass += ' screenshot-img';
+  const rawImg = (item.image||'').trim();
+  // 예전 자동 캡처 주소(microlink)는 더 이상 쓰지 않습니다 → 그림 없음으로 처리
+  const hasImg = rawImg && !(isMiri && isMiriAutoCapture(rawImg));
+  if(hasImg){
+    imgSrc = resolveImageSrc(rawImg);
+    if(isMiri) imgClass += ' contain-img';
+  }else if(isMiri){
+    imgSrc = '';
   }else if(kind==='line' && lineImageFromUrl(link)){
     imgSrc = lineImageFromUrl(link);
   }else if(link){
@@ -739,7 +727,7 @@ function renderItemCard(item, forPDF, idx, kind){
     imgClass += ' screenshot-img';
   }
   if(imgSrc && imgSrc.indexOf('line-scdn.net')!==-1) imgClass += ' contain-img';
-  const miriCrop = isMiri && isMiriAutoCapture(imgSrc);
+  const miriCrop = false;
   if(forPDF) imgSrc = pdfSafeSrc(imgSrc);
 
   let inner = '';
@@ -749,7 +737,7 @@ function renderItemCard(item, forPDF, idx, kind){
     inner += miriCrop ? `<div class="miri-crop">${imgTag}</div>` : imgTag;
     if(!forPDF) inner += `<div class="no-image-placeholder"><i class="fa-solid fa-circle-exclamation"></i><span>이미지를 불러올 수 없어요</span></div>`;
   }else if(!forPDF){
-    inner += `<div class="no-image-placeholder visible"><i class="fa-solid fa-link"></i><span>미리보기 이미지 없음</span></div>`;
+    inner += `<div class="no-image-placeholder visible"><i class="fa-solid fa-link"></i><span>${isMiri?'캡처 그림을 올려주세요':'미리보기 이미지 없음'}</span></div>`;
   }
   const cardClass = isMiri ? ('item-card large' + (miriCrop?' miri-sq':'')) : 'item-card';
   return `
@@ -807,7 +795,7 @@ function renderStudentEdit(){
   html += `</div>`;
 
   html += `<div class="edit-section">`;
-  html += renderEditList('stockImages','miri','미리캔버스 스톡이미지','fa-image','미리캔버스에서 내 요소가 모여 보이는 페이지 주소를 붙여넣으세요. 요소 화면을 자동으로 캡처해 넣어요 (처음엔 10초 정도 걸릴 수 있어요).');
+  html += renderEditList('stockImages','miri','미리캔버스 스톡이미지','fa-image','미리캔버스에서 내 요소가 모여 보이는 페이지 주소를 붙여넣고, 그 화면을 캡처한 그림을 "캡처 그림 올리기"로 올려주세요.');
   html += `</div>`;
 
   html += `
@@ -848,17 +836,19 @@ function renderEntryEditor(category, sub, idx, item){
       onchange="onLinkCommitted('${category}','${sub}',${idx},this.value)">
   </div>
   <div class="entry-row">
-    <button class="btn small" onclick="fetchPreviewForEntry('${category}','${sub}',${idx},false)"><i class="fa-solid fa-magnifying-glass"></i>${isMiri?'요소 화면 캡처':'미리보기 불러오기'}</button>
+    ${isMiri
+      ? `<label class="btn small" style="display:inline-flex;align-items:center;"><i class="fa-solid fa-upload"></i>${item.image && !isMiriAutoCapture(item.image) ? '캡처 그림 바꾸기' : '캡처 그림 올리기'}<input type="file" accept="image/*" style="display:none" onchange="onMiriImagePicked('${category}','${sub}',${idx},this)"></label>`
+      : `<button class="btn small" onclick="fetchPreviewForEntry('${category}','${sub}',${idx},false)"><i class="fa-solid fa-magnifying-glass"></i>미리보기 불러오기</button>`}
     <button class="btn small danger" onclick="removeEntry('${category}','${sub}',${idx})"><i class="fa-solid fa-trash"></i>삭제</button>
   </div>`;
   html += `<div class="entry-row">
     <input type="text" placeholder="작품 제목" value="${escapeHtml(item.title)}" oninput="updateField('${path}','title',this.value)">
-    <input type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="이미지 주소 (자동 입력 · 직접 입력 가능)" value="${escapeHtml(item.image||'')}" oninput="updateField('${path}','image',this.value)">
+    ${isMiri ? '' : `<input type="url" inputmode="url" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="이미지 주소 (자동 입력 · 직접 입력 가능)" value="${escapeHtml(item.image||'')}" oninput="updateField('${path}','image',this.value)">`}
   </div>`;
   if(item.image){
     const thumbSrc = resolveImageSrc(item.image);
     if(isMiri && isMiriAutoCapture(thumbSrc)){
-      html += `<div class="miri-crop-thumb"><div class="miri-crop"><img src="${escapeHtml(thumbSrc)}" onerror="this.style.display='none'"></div></div>`;
+      html += `<div class="fetch-status"><i class="fa-solid fa-triangle-exclamation"></i>예전 자동 캡처는 더 이상 보이지 않아요. 미리캔버스 화면을 캡처해서 "캡처 그림 올리기"로 올려주세요.</div>`;
     }else{
       html += `<img src="${escapeHtml(thumbSrc)}" class="preview-thumb${isMiri?' large':''}" onerror="this.style.display='none'">`;
     }
@@ -944,27 +934,14 @@ async function fetchPreviewForEntry(category, sub, idx, auto){
   const url = normalizeUrl(item.link);
   item._lastFetched = url;
 
-  /* --- 미리캔버스: 요소 화면 캡처 --- */
+  /* --- 미리캔버스: 제목만 채우고, 그림은 직접 올립니다 --- */
   if(sub==='miri'){
     const q = getMiricanvasQuery(url);
     if(!item.title){ item.title = q ? `${q} 스톡이미지 모음` : '미리캔버스 스톡이미지 모음'; }
-    const cap = miriCaptureUrl(url);
-    item.image = cap;
-    item._status = {type:'loading', msg:'요소 화면을 캡처하는 중이에요... (최대 20초)'};
+    if(!item.image || isMiriAutoCapture(item.image)){
+      item._status = {type:'fail', msg:'미리캔버스 화면을 캡처한 뒤 "캡처 그림 올리기"로 올려주세요.'};
+    }
     hasUnsavedChanges=true;
-    rerenderKeepScroll();
-    const ok = await new Promise(res=>{
-      const im = new Image();
-      const t = setTimeout(()=>res(false), 25000);
-      im.onload = ()=>{ clearTimeout(t); res(true); };
-      im.onerror = ()=>{ clearTimeout(t); res(false); };
-      im.src = cap;
-    });
-    const cur = getEntry(category, sub, idx);
-    if(!cur || view!=='student-edit') return;
-    cur._status = ok
-      ? {type:'ok', msg:'요소 화면을 캡처했어요. 저장하기를 눌러주세요.'}
-      : {type:'fail', msg:'캡처가 아직 안 끝났거나 실패했어요. 잠시 뒤 "요소 화면 캡처"를 다시 눌러주세요.'};
     rerenderKeepScroll();
     return;
   }
@@ -990,6 +967,54 @@ async function fetchPreviewForEntry(category, sub, idx, auto){
     cur._status = {type:'fail', msg:'자동 불러오기에 실패했어요. 제목을 직접 입력해주세요 (이미지는 페이지 캡처로 자동 표시돼요).'};
   }
   hasUnsavedChanges=true;
+  rerenderKeepScroll();
+}
+
+// 올린 그림을 작게 줄여(JPEG) 글자 형태로 바꿉니다. 외부 서비스 없이 포트폴리오와 함께 저장돼요.
+function shrinkImageFile(file, maxSide, quality){
+  return new Promise((resolve, reject)=>{
+    const blobUrl = URL.createObjectURL(file);
+    const im = new Image();
+    im.onload = ()=>{
+      try{
+        const scale = Math.min(1, maxSide / Math.max(im.naturalWidth, im.naturalHeight));
+        const w = Math.max(1, Math.round(im.naturalWidth*scale));
+        const h = Math.max(1, Math.round(im.naturalHeight*scale));
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const ctx = c.getContext('2d');
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0,w,h);
+        ctx.drawImage(im,0,0,w,h);
+        resolve(c.toDataURL('image/jpeg', quality));
+      }catch(e){ reject(e); }
+      finally{ URL.revokeObjectURL(blobUrl); }
+    };
+    im.onerror = ()=>{ URL.revokeObjectURL(blobUrl); reject(new Error('image load failed')); };
+    im.src = blobUrl;
+  });
+}
+async function onMiriImagePicked(category, sub, idx, input){
+  const file = input.files && input.files[0];
+  input.value = '';
+  if(!file) return;
+  const item = getEntry(category, sub, idx);
+  if(!item) return;
+  item._status = {type:'loading', msg:'그림을 넣는 중이에요...'};
+  rerenderKeepScroll();
+  let dataUrl = '';
+  try{
+    dataUrl = await shrinkImageFile(file, 1000, 0.82);
+    if(dataUrl.length > 400000) dataUrl = await shrinkImageFile(file, 800, 0.65);
+  }catch(e){ dataUrl = ''; }
+  const cur = getEntry(category, sub, idx);
+  if(!cur || view!=='student-edit') return;
+  if(dataUrl){
+    cur.image = dataUrl;
+    cur._status = {type:'ok', msg:'그림을 넣었어요. 저장하기를 눌러주세요.'};
+    hasUnsavedChanges = true;
+  }else{
+    cur._status = {type:'fail', msg:'이 파일은 그림으로 열 수 없어요. 캡처한 그림(PNG·JPG)을 골라주세요.'};
+  }
   rerenderKeepScroll();
 }
 
@@ -1059,7 +1084,7 @@ async function saveStudentData(){
 
   const byteLen = new TextEncoder().encode(payload).length;
   if(byteLen > 4500000){
-    alert('저장할 내용의 용량이 너무 큽니다 (' + Math.round(byteLen/1024) + 'KB).\n"이미지 주소" 칸에 data:image/...로 시작하는 긴 값이 있는지 확인하고, https:// 이미지 링크로 바꿔주세요.');
+    alert('저장할 내용의 용량이 너무 큽니다 (' + Math.round(byteLen/1024) + 'KB).\n미리캔버스 캡처 그림 개수를 줄이거나, "이미지 주소" 칸에 data:image/...로 시작하는 긴 값이 있으면 https:// 이미지 링크로 바꿔주세요.');
     return false;
   }
 
@@ -1234,6 +1259,9 @@ function renderAdmin(){
         <button class="btn primary" onclick="openEditNames()"><i class="fa-solid fa-user-pen"></i>명단 입력</button>
         <button class="btn secondary" onclick="downloadAllPDF()"><i class="fa-solid fa-download"></i>전체 PDF 다운로드</button>
         <button class="btn secondary" onclick="openContactList()"><i class="fa-solid fa-address-book"></i>이메일 목록</button>
+        <button class="btn secondary" onclick="exportAllData(this)"><i class="fa-solid fa-floppy-disk"></i>학생 정보 백업 저장</button>
+        <button class="btn secondary" onclick="document.getElementById('backup-file').click()"><i class="fa-solid fa-upload"></i>백업 불러오기</button>
+        <input type="file" id="backup-file" accept=".json,application/json" style="display:none" onchange="onBackupPicked(this)">
         <button class="btn secondary" onclick="toggleRightClickLock()"><i class="fa-solid ${config.rightClickLocked?'fa-lock':'fa-lock-open'}"></i>${config.rightClickLocked?'우클릭 풀기':'우클릭 잠그기'}</button>
       </div>
       <div class="table-scroll">
@@ -1243,6 +1271,7 @@ function renderAdmin(){
         </table>
       </div>
       <p class="hint">이름을 누르면 해당 학생의 포트폴리오를 볼 수 있어요.</p>
+      <p class="hint">"학생 정보 백업 저장"은 명단·이메일·등록 작품(올린 캡처 그림 포함)을 파일 하나로 받아요. "백업 불러오기"로 그 파일을 넣으면 그때 상태로 되돌아가요.</p>
       <div id="admin-progress"></div>
     </div>
   `;
@@ -1318,6 +1347,131 @@ async function downloadAllPDF(){
   setTimeout(()=>{ if(progressEl) progressEl.textContent=''; }, 2500);
 }
 
+/* ===================== 백업 저장 / 불러오기 ===================== */
+const BACKUP_APP = 'oddmoon-portfolio-backup';
+function normalizeItems(list){
+  if(!Array.isArray(list)) return [];
+  return list.filter(it=>it && typeof it==='object').map(it=>({
+    title: String(it.title||''), link: String(it.link||''), image: String(it.image||'')
+  }));
+}
+function normalizeStudent(d){
+  d = (d && typeof d==='object') ? d : {};
+  const emo = d.emoticons || {}, stock = d.stockImages || {};
+  return {
+    email: String(d.email||''),
+    emoticons: { ogq: normalizeItems(emo.ogq), line: normalizeItems(emo.line) },
+    stockImages: { miri: normalizeItems(stock.miri) }
+  };
+}
+// 백업용: 인터넷 오류를 "빈 자료"로 착각하지 않도록, 정말 없는 경우만 빈 자료로 처리
+async function loadStudentStrict(i){
+  try{
+    const res = await window.storage.get(`student-${i}`);
+    return normalizeStudent(JSON.parse(res.value));
+  }catch(e){
+    if(e && String(e.message||'').indexOf('not found')===0) return emptyData();
+    throw e;
+  }
+}
+function backupFileName(){
+  const d = new Date(), p = n=>String(n).padStart(2,'0');
+  return `${COURSE_MAIN}_학생백업_${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}.json`;
+}
+function downloadJson(obj, filename){
+  const blob = new Blob([JSON.stringify(obj)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(()=>{ URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+}
+async function buildBackup(){
+  const students = [];
+  for(let i=0;i<config.names.length;i++) students.push(await loadStudentStrict(i));
+  return {
+    app: BACKUP_APP, version: 1, course: COURSE_MAIN, keyPrefix: KEY_PREFIX,
+    savedAt: new Date().toISOString(),
+    config: { names: config.names.slice(), rightClickLocked: !!config.rightClickLocked },
+    students
+  };
+}
+async function exportAllData(btn){
+  const old = btn ? btn.innerHTML : '';
+  if(btn){ btn.disabled = true; btn.innerHTML = '<i class="fa-solid fa-spinner fa-spin"></i>백업 만드는 중...'; }
+  try{
+    const backup = await buildBackup();
+    adminData = backup.students.map(s=>JSON.parse(JSON.stringify(s)));
+    downloadJson(backup, backupFileName());
+    showToast(backup.students.length + '명의 정보를 백업 파일로 저장했어요.');
+  }catch(e){
+    alert('백업을 만들지 못했어요. 인터넷 연결을 확인하고 다시 눌러주세요.\n(상세: ' + ((e&&e.message)||e) + ')');
+  }finally{
+    if(btn){ btn.disabled = false; btn.innerHTML = old; }
+  }
+}
+function parseBackup(text){
+  let data;
+  try{ data = JSON.parse(text); }catch(e){ return null; }
+  if(!data || data.app!==BACKUP_APP || !data.config || !Array.isArray(data.config.names) || !Array.isArray(data.students)) return null;
+  const names = data.config.names.map(n=>String(n||'').trim());
+  if(names.length<1) return null;
+  const students = names.map((_,i)=>normalizeStudent(data.students[i]));
+  return { names, rightClickLocked: data.config.rightClickLocked!==false, students, savedAt: data.savedAt||'', course: data.course||'' };
+}
+async function onBackupPicked(input){
+  const file = input.files && input.files[0];
+  input.value = '';
+  if(!file) return;
+  let text = '';
+  try{ text = await file.text(); }catch(e){}
+  const b = parseBackup(text);
+  if(!b){ alert('이 파일은 학생 정보 백업 파일이 아니에요.\n"학생 정보 백업 저장"으로 받은 .json 파일을 골라주세요.'); return; }
+  const when = b.savedAt ? new Date(b.savedAt).toLocaleString('ko-KR') : '알 수 없음';
+  const otherCourse = b.course && b.course!==COURSE_MAIN ? `\n※ 다른 수업(${b.course})의 백업이에요.` : '';
+  if(!confirm(`백업 파일을 불러올까요?\n\n저장 시각: ${when}\n학생 수: ${b.names.length}명${otherCourse}\n\n지금 저장된 명단과 모든 학생 정보가 이 백업 내용으로 바뀝니다.\n(안전을 위해 지금 상태를 먼저 백업 파일로 받아둡니다.)`)) return;
+
+  const progressEl = document.getElementById('admin-progress');
+  const setProg = t=>{ const el=document.getElementById('admin-progress'); if(el) el.textContent=t; };
+  // 1) 덮어쓰기 전에 현재 상태 자동 백업
+  setProg('지금 상태를 먼저 백업하는 중...');
+  try{
+    downloadJson(await buildBackup(), backupFileName().replace('_학생백업_','_불러오기전_자동백업_'));
+  }catch(e){
+    setProg('');
+    alert('지금 상태를 백업하지 못해서 불러오기를 멈췄어요. 인터넷 연결을 확인하고 다시 시도해주세요.\n(상세: ' + ((e&&e.message)||e) + ')');
+    return;
+  }
+  // 2) 학생 정보 쓰기 (지금 명단이 더 길면 남는 번호는 비웁니다)
+  const oldCount = config.names.length;
+  const total = Math.max(oldCount, b.names.length);
+  const failed = [];
+  for(let i=0;i<total;i++){
+    setProg(`불러오는 중... (${i+1}/${total})`);
+    const data = i < b.names.length ? b.students[i] : emptyData();
+    let ok = false;
+    for(let t=0;t<3 && !ok;t++){
+      try{ ok = !!(await window.storage.set(`student-${i}`, JSON.stringify(data))); }catch(e){ ok=false; }
+      if(!ok && t<2) await new Promise(r=>setTimeout(r,600));
+    }
+    if(!ok) failed.push(i < b.names.length ? (b.names[i] || (i+1)+'번') : (i+1)+'번');
+  }
+  // 3) 명단 쓰기
+  const newConfig = Object.assign({}, config, { names: b.names.slice(), rightClickLocked: b.rightClickLocked });
+  const cfgOk = !!(await window.storage.set('config', JSON.stringify(newConfig)));
+  if(cfgOk) config = newConfig;
+  adminData = b.students.map(s=>JSON.parse(JSON.stringify(s)));
+  if(!cfgOk) adminData = await Promise.all(config.names.map((_,i)=>loadStudentData(i)));
+  render();
+  if(failed.length===0 && cfgOk){
+    showToast(b.names.length + '명의 정보를 불러왔어요.');
+  }else{
+    alert('일부를 저장하지 못했어요. 인터넷 연결을 확인하고 같은 백업 파일로 다시 불러와주세요.' +
+      (cfgOk?'':'\n- 명단') + (failed.length? '\n- ' + failed.join(', ') : ''));
+  }
+}
+
 /* ===================== ICONS (inline SVG) ===================== */
 const ICON_PATHS = {
   'spinner':'<path d="M21 12a9 9 0 1 1-6.22-8.56"/>',
@@ -1345,6 +1499,7 @@ const ICON_PATHS = {
   'triangle-exclamation':'<path d="m21.7 18-8-14a2 2 0 0 0-3.5 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3"/><path d="M12 9v4M12 17h.01"/>',
   'circle-info':'<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
   'chart-column':'<path d="M3 3v18h18"/><path d="M18 17V9M13 17V5M8 17v-3"/>',
+  'upload':'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5M12 3v12"/>',
   'download':'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5M12 15V3"/>',
   'address-book':'<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M8 2v4M16 2v4"/><circle cx="12" cy="12" r="3"/><path d="M7 20a5 5 0 0 1 10 0"/>',
   'rotate-left':'<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/>'
