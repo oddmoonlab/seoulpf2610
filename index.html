@@ -213,8 +213,18 @@ input:focus, textarea:focus{ outline:none; border-color:var(--ink); }
 .item-img-wrap.img-failed .no-image-placeholder{ display:flex; }
 .item-info{ padding:10px 1px 0; }
 .item-title{ font-weight:700; font-size:.82rem; color:var(--ink); margin-bottom:3px; line-height:1.35; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.item-link{ font-size:.78rem; color:var(--muted); text-decoration:none; font-weight:600; display:inline-block; padding:4px 0; }
-.item-link-text{ font-size:.7rem; color:var(--muted); word-break:break-all; }
+.item-link{
+  display:inline-flex; align-items:center; gap:5px; margin-top:6px; padding:7px 16px; min-height:36px;
+  border:1.5px solid var(--ink); border-radius:999px; background:#fff; color:var(--ink);
+  font-size:.86rem; font-weight:800; text-decoration:none; letter-spacing:.5px; touch-action:manipulation;
+}
+.item-link i{ margin:0 !important; }
+.item-link:active{ background:var(--ink); color:#fff; }
+@media (hover:hover){ .item-link:hover{ background:var(--ink); color:#fff; } }
+.item-link-text{ font-size:.7rem; color:var(--muted); word-break:break-all; margin-top:5px; }
+.pdf-doc .item-link{ font-size:15px; padding:8px 18px; }
+.pdf-doc .item-link-text{ font-size:12px; }
+.roster-del{ flex:0 0 auto; }
 .p1{background:var(--p1);} .p2{background:var(--p2);} .p3{background:var(--p3);}
 .p4{background:var(--p4);} .p5{background:var(--p5);} .p6{background:var(--p6);}
 .action-bar{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
@@ -541,12 +551,14 @@ function renderSetupEdit(){
     <div class="roster-row">
       <div class="roster-num">${i+1}</div>
       <input type="text" class="roster-input" value="${escapeHtml(n)}" placeholder="이름 입력" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+      <button class="btn small danger roster-del" onclick="deleteRosterRow(${i})" aria-label="${i+1}번 삭제"><i class="fa-solid fa-trash"></i>삭제</button>
     </div>`).join('');
   return `
     <div class="card setup-card">
       <h2>학생 명단 입력</h2>
       <p>출석부 순서대로 이름을 입력하세요. 이름은 학생 본인 확인 비밀번호로도 사용됩니다.<br>
-      ※ 번호마다 포트폴리오가 저장되므로, 수업 시작 후에는 이름 순서를 바꾸지 마세요.</p>
+      ※ 번호마다 포트폴리오가 저장되므로, 수업 시작 후에는 이름 순서를 바꾸지 마세요.<br>
+      ※ 학생을 삭제하면 그 학생의 작품도 함께 지워지고, 아래 학생들은 작품과 함께 한 칸씩 올라갑니다.</p>
       <div class="paste-box">
         <b><i class="fa-solid fa-paste"></i>여러 명 한번에 붙여넣기</b>
         <textarea id="roster-paste" rows="4" placeholder="출석부에서 이름을 복사해 붙여넣으세요 (한 줄에 한 명)"></textarea>
@@ -555,8 +567,8 @@ function renderSetupEdit(){
       <div class="roster-list">${rows}</div>
       <div class="row" style="margin-bottom:16px;">
         <button class="btn small ghost" onclick="addRosterRow()"><i class="fa-solid fa-plus"></i>한 명 추가</button>
-        <button class="btn small ghost" onclick="removeRosterRow()"><i class="fa-solid fa-minus"></i>마지막 번호 삭제</button>
       </div>
+      <div id="roster-status" class="fetch-status" style="margin-bottom:12px;"></div>
       <div class="row">
         <button class="btn primary" onclick="saveSetupEdit()"><i class="fa-solid fa-floppy-disk"></i>저장</button>
         <button class="btn ghost" onclick="backToAdmin()">취소</button>
@@ -578,11 +590,51 @@ function fillRosterFromPaste(){
   showToast(names.length + '명의 이름을 채웠어요. 확인 후 저장을 눌러주세요.');
 }
 function addRosterRow(){ config.names = readRosterInputs(); config.names.push(''); render(); }
-function removeRosterRow(){
+let rosterBusy = false;
+async function setWithRetry(key, obj){
+  for(let t=0;t<3;t++){
+    try{ if(await window.storage.set(key, JSON.stringify(obj))) return true; }catch(e){}
+    if(t<2) await new Promise(r=>setTimeout(r,600));
+  }
+  return false;
+}
+// 원하는 학생 한 명 삭제: 아래 학생들의 작품을 한 칸씩 올려서 번호와 작품이 어긋나지 않게 합니다
+async function deleteRosterRow(i){
+  if(rosterBusy) return;
   const cur = readRosterInputs();
-  if(cur.length<=1) return;
-  if(!confirm(cur.length + '번 학생 칸을 삭제할까요?')) return;
-  cur.pop(); config.names = cur; render();
+  if(cur.length<=1){ alert('학생이 한 명뿐이라 삭제할 수 없어요.'); return; }
+  const label = cur[i] ? `${i+1}번 ${cur[i]}` : `${i+1}번 (이름 없음)`;
+  if(!confirm(`${label} 학생을 명단에서 삭제할까요?\n\n이 학생의 이메일과 등록한 작품도 함께 지워지고, 아래 번호 학생들이 한 칸씩 올라갑니다.\n지금 화면의 명단도 바로 저장돼요.`)) return;
+  if(!confirm(`정말 ${label} 학생을 삭제할까요? 되돌릴 수 없어요.\n(걱정되면 취소하고, 관리자 화면에서 "학생 정보 백업 저장"을 먼저 눌러주세요.)`)) return;
+  rosterBusy = true;
+  const status = t=>{ const el=document.getElementById('roster-status'); if(el) el.textContent=t; };
+  status('삭제하는 중이에요... 잠시만 기다려주세요.');
+  try{
+    const n = cur.length;
+    // 1) 아래 학생들 정보를 먼저 모두 읽기 (못 읽으면 아무것도 바꾸지 않고 멈춤)
+    const below = [];
+    try{ for(let j=i+1;j<n;j++) below.push(await loadStudentStrict(j)); }
+    catch(e){ status(''); alert('학생 정보를 읽지 못해서 삭제를 멈췄어요. 아무것도 바뀌지 않았어요.\n인터넷 연결을 확인하고 다시 눌러주세요.'); return; }
+    // 2) 한 칸씩 올려 쓰고, 맨 끝 칸은 비우기
+    const failed = [];
+    for(let j=i;j<n;j++){
+      status(`삭제하는 중이에요... (${j-i+1}/${n-i})`);
+      const data = j<n-1 ? below[j-i] : emptyData();
+      if(!(await setWithRetry(`student-${j}`, data))) failed.push(j+1);
+    }
+    // 3) 명단 저장
+    const names = cur.slice(); names.splice(i,1);
+    const newConfig = Object.assign({}, config, { names });
+    const cfgOk = await setWithRetry('config', newConfig);
+    if(cfgOk) config = newConfig; else config.names = cur;
+    while(adminData.length < n) adminData.push(emptyData());
+    if(cfgOk){ adminData.splice(i,1); adminData.length = names.length; }
+    render();
+    if(cfgOk && failed.length===0) showToast(`${label} 학생을 삭제했어요.`);
+    else alert('일부를 저장하지 못했어요. 관리자 화면에서 학생 작품이 맞는 번호에 있는지 확인하고, 어긋났으면 "백업 불러오기"로 되돌려주세요.' + (failed.length? '\n(저장 실패 번호: ' + failed.join(', ') + ')' : '') + (cfgOk?'':'\n(명단 저장 실패)'));
+  }finally{
+    rosterBusy = false;
+  }
 }
 async function saveSetupEdit(){
   const names = readRosterInputs();
@@ -740,12 +792,16 @@ function renderItemCard(item, forPDF, idx, kind){
     inner += `<div class="no-image-placeholder visible"><i class="fa-solid fa-link"></i><span>${isMiri?'캡처 그림을 올려주세요':'미리보기 이미지 없음'}</span></div>`;
   }
   const cardClass = isMiri ? ('item-card large' + (miriCrop?' miri-sq':'')) : 'item-card';
+  // PDF에서 누르면 열리는 주소 (http/https만)
+  const pdfHref = link && /^https?:\/\//i.test(normalizeUrl(link)) ? normalizeUrl(link) : '';
   return `
-    <div class="${cardClass}">
+    <div class="${cardClass}"${forPDF && pdfHref ? ` data-pdf-href="${escapeHtml(pdfHref)}"` : ''}>
       <div class="item-img-wrap ${pastel}">${inner}</div>
       <div class="item-info">
         <div class="item-title">${escapeHtml(item.title || '제목 미입력')}</div>
-        ${forPDF ? `<div class="item-link-text">${escapeHtml(shortLinkLabel(link))}</div>` : `<a href="${escapeHtml(link?normalizeUrl(link):'#')}" target="_blank" rel="noopener" class="item-link">바로가기 <i class="fa-solid fa-arrow-up-right-from-square"></i></a>`}
+        ${forPDF
+          ? (pdfHref ? `<span class="item-link">바로가기 <i class="fa-solid fa-arrow-up-right-from-square"></i></span><div class="item-link-text">${escapeHtml(hostOf(link))}</div>` : '')
+          : `<a href="${escapeHtml(link?normalizeUrl(link):'#')}" target="_blank" rel="noopener" class="item-link">바로가기 <i class="fa-solid fa-arrow-up-right-from-square"></i></a>`}
       </div>
     </div>
   `;
@@ -1138,6 +1194,12 @@ async function buildPdfForStudent(pdf, idx, data, area, isFirstOverall){
   area.querySelectorAll('img').forEach(im=>im.removeAttribute('loading'));
   await waitForImages(area);
   await new Promise(r=>setTimeout(r,80));
+  // 작품 카드 위치를 기억했다가 PDF 같은 자리에 누를 수 있는 링크를 겁니다
+  const areaRect = area.getBoundingClientRect();
+  const pdfLinks = Array.from(area.querySelectorAll('[data-pdf-href]')).map(el=>{
+    const r = el.getBoundingClientRect();
+    return { url: el.getAttribute('data-pdf-href'), x: r.left-areaRect.left, y: r.top-areaRect.top, w: r.width, h: r.height };
+  });
   const canvas = await html2canvas(area, {useCORS:true, scale:1.5, backgroundColor:'#ffffff', width:1000, windowWidth:1000});
 
   const pageWmm = 210, pageHmm = 297, marginMm = 8;
@@ -1152,6 +1214,10 @@ async function buildPdfForStudent(pdf, idx, data, area, isFirstOverall){
   }
   const xMm = marginMm + (usableWmm - drawWmm)/2;
   pdf.addImage(canvas.toDataURL('image/jpeg', 0.92),'JPEG',xMm,marginMm,drawWmm,drawHmm);
+  const mmPerPx = drawWmm / (canvas.width / 1.5);
+  pdfLinks.forEach(l=>{
+    if(l.w>0 && l.h>0) pdf.link(xMm + l.x*mmPerPx, marginMm + l.y*mmPerPx, l.w*mmPerPx, l.h*mmPerPx, { url: l.url });
+  });
   area.innerHTML = '';
 }
 
